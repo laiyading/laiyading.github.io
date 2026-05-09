@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI 无限画布工作台 | Banana & GPT-Imaging2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg-main: #f3f4f6;
+      --bg-card: #ffffff;
+      --text-color: #1f2937;
+      --border-color: #e5e7eb;
+      --canvas-grid: #e5e7eb;
+    }
+    .dark {
+      --bg-main: #111827;
+      --bg-card: #1f2937;
+      --text-color: #f3f4f6;
+      --border-color: #374151;
+      --canvas-grid: #272e3b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      overflow: hidden;
+      font-family: system-ui, sans-serif;
+      background: var(--bg-main);
+      color: var(--text-color);
+      transition: all 0.3s ease;
+    }
+    /* 无限画布容器 */
+    #canvasWrap {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+    #infiniteCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+      background: repeating-linear-gradient(
+        transparent 0px, transparent 20px,
+        var(--canvas-grid) 20px, var(--canvas-grid) 21px
+      );
+      cursor: grab;
+    }
+    #infiniteCanvas:active { cursor: grabbing; }
+    /* 绘图画布层 */
+    #drawCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: auto;
+    }
+    /* 侧边控制面板 */
+    .side-panel {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 340px;
+      max-height: 92vh;
+      overflow-y: auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+      z-index: 999;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    .btn {
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      transition: 0.2s;
+    }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-success { background: #059669; color: #fff; }
+    .btn-dark { background: #374151; color: #fff; }
+    textarea,input,select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      background: var(--bg-main);
+      color: var(--text-color);
+      outline: none;
+    }
+    .tool-bar {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 999;
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 顶部工具栏 -->
+  <div class="tool-bar">
+    <button class="btn btn-dark" id="drawToolBtn">??? 绘图</button>
+    <button class="btn btn-dark" id="dragToolBtn">? 移动画布</button>
+    <button class="btn btn-dark" id="toggleDark">?? 明暗模式</button>
+  </div>
+
+  <!-- 无限画布容器 -->
+  <div id="canvasWrap">
+    <div id="infiniteCanvas">
+      <canvas id="drawCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- 右侧AI绘图控制面板 -->
+  <div class="side-panel">
+    <h2 class="text-lg font-bold mb-4">?? AI 图像生成</h2>
+
+    <div class="mb-3">
+      <label class="text-sm block mb-1">选择模型</label>
+      <select id="aiModel">
+        <option value="banana">Banana 模型</option>
+        <option value="gptImaging2">GPT-Imaging2 模型</option>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="text-sm block mb-1">出图比例</label>
+      <select id="ratioSelect">
+        <option value="1:1">1:1 正方形</option>
+        <option value="4:3">4:3 横版</option>
+        <option value="16:9">16:9 宽屏</option>
+        <option value="9:16">9:16 竖屏</option>
+        <option value="custom">自定义尺寸</option>
+      </select>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <div>
+        <label class="text-sm block mb-1">宽度</label>
+        <input type="number" id="imgW" value="1024" disabled>
+      </div>
+      <div>
+        <label class="text-sm block mb-1">高度</label>
+        <input type="number" id="imgH" value="1024" disabled>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="text-sm block mb-1">API Key</label>
+      <input type="text" id="apiKey" placeholder="输入你的API Key">
+    </div>
+
+    <div class="mb-3">
+      <label class="text-sm block mb-1">提示词</label>
+      <textarea id="prompt" rows="4" placeholder="输入绘画提示词...">高清写实，唯美风景，细节拉满</textarea>
+    </div>
+
+    <button class="btn btn-primary w-full mb-3" id="genBtn">?? 一键生成图像</button>
+
+    <div class="mt-3">
+      <p class="text-sm font-semibold mb-1">生成结果</p>
+      <div id="resultBox" class="border rounded p-2 min-h-[120px] text-sm"></div>
+    </div>
+  </div>
+
+  <script>
+    // ========== 暗色模式切换 ==========
+    const html = document.documentElement;
+    const toggleDark = document.getElementById('toggleDark');
+    toggleDark.addEventListener('click', () => {
+      html.classList.toggle('dark');
+    });
+
+    // ========== 无限画布 拖拽+缩放 ==========
+    const canvasWrap = document.getElementById('canvasWrap');
+    const infiniteCanvas = document.getElementById('infiniteCanvas');
+    let scale = 1;
+    let posX = 0, posY = 0;
+    let isDragCanvas = false;
+    let startX, startY;
+
+    // 更新画布变换
+    function updateCanvasTransform() {
+      infiniteCanvas.style.transform = `translate(${posX}px,${posY}px) scale(${scale})`;
+    }
+
+    // 画布拖拽
+    canvasWrap.addEventListener('mousedown', (e) => {
+      if(isDrawMode) return;
+      isDragCanvas = true;
+      startX = e.clientX - posX;
+      startY = e.clientY - posY;
+    });
+    canvasWrap.addEventListener('mousemove', (e) => {
+      if(!isDragCanvas || isDrawMode) return;
+      posX = e.clientX - startX;
+      posY = e.clientY - startY;
+      updateCanvasTransform();
+    });
+    canvasWrap.addEventListener('mouseup', () => isDragCanvas = false);
+    canvasWrap.addEventListener('mouseleave', () => isDragCanvas = false);
+
+    // 滚轮缩放
+    canvasWrap.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      scale = Math.max(0.15, Math.min(3, scale + delta));
+      updateCanvasTransform();
+    });
+
+    // ========== 画布绘图工具 ==========
+    const drawCanvas = document.getElementById('drawCanvas');
+    const ctx = drawCanvas.getContext('2d');
+    let isDrawMode = false;
+    let isDrawing = false;
+    let lastX = 0, lastY = 0;
+
+    // 适配画布大小
+    function resizeDrawCanvas() {
+      drawCanvas.width = window.innerWidth;
+      drawCanvas.height = window.innerHeight;
+    }
+    resizeDrawCanvas();
+    window.addEventListener('resize', resizeDrawCanvas);
+
+    // 工具切换按钮
+    const drawToolBtn = document.getElementById('drawToolBtn');
+    const dragToolBtn = document.getElementById('dragToolBtn');
+    drawToolBtn.onclick = () => { isDrawMode = true; alert('已进入绘图模式，可在画布手绘'); }
+    dragToolBtn.onclick = () => { isDrawMode = false; alert('已切换为画布移动模式'); }
+
+    // 手绘逻辑
+    drawCanvas.addEventListener('mousedown', (e) => {
+      if(!isDrawMode) return;
+      isDrawing = true;
+      lastX = e.offsetX;
+      lastY = e.offsetY;
+    });
+    drawCanvas.addEventListener('mousemove', (e) => {
+      if(!isDrawMode || !isDrawing) return;
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(e.offsetX, e.offsetY);
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      lastX = e.offsetX;
+      lastY = e.offsetY;
+    });
+    drawCanvas.addEventListener('mouseup', () => isDrawing = false);
+    drawCanvas.addEventListener('mouseleave', () => isDrawing = false);
+
+    // ========== 比例联动尺寸输入 ==========
+    const ratioSelect = document.getElementById('ratioSelect');
+    const imgW = document.getElementById('imgW');
+    const imgH = document.getElementById('imgH');
+
+    ratioSelect.addEventListener('change', () => {
+      const val = ratioSelect.value;
+      if(val === 'custom') {
+        imgW.disabled = false;
+        imgH.disabled = false;
+        return;
+      }
+      imgW.disabled = true;
+      imgH.disabled = true;
+      const base = 1024;
+      let w,h;
+      switch(val){
+        case '1:1': w=base; h=base; break;
+        case '4:3': w=base; h=768; break;
+        case '16:9': w=base; h=576; break;
+        case '9:16': w=576; h=1024; break;
+      }
+      imgW.value = w;
+      imgH.value = h;
+    });
+
+    // ========== AI绘图API模拟框架（可对接真实Banana/GPT-Imaging2） ==========
+    const genBtn = document.getElementById('genBtn');
+    const resultBox = document.getElementById('resultBox');
+
+    genBtn.addEventListener('click', async () => {
+      const model = document.getElementById('aiModel').value;
+      const key = document.getElementById('apiKey').value;
+      const prompt = document.getElementById('prompt').value;
+      const w = imgW.value;
+      const h = imgH.value;
+
+      if(!key) {
+        resultBox.innerHTML = '<span class="text-red-500">请先输入API Key</span>';
+        return;
+      }
+      if(!prompt) {
+        resultBox.innerHTML = '<span class="text-red-500">请输入绘画提示词</span>';
+        return;
+      }
+
+      resultBox.innerHTML = '正在请求AI模型生成中...';
+
+      // 这里预留真实API调用接口，填入Banana / GPT-Imaging2 官方接口即可直接用
+      setTimeout(() => {
+        resultBox.innerHTML = `
+          <div class="text-green-600">? 请求已发送</div>
+          <div>模型：${model}</div>
+          <div>尺寸：${w} × ${h}</div>
+          <div>提示词：${prompt}</div>
+          <div class="mt-2 text-xs text-gray-500">可对接官方API接口返回图片并自动放入无限画布</div>
+        `;
+      }, 1500);
+    });
+  </script>
+</body>
+</html>
